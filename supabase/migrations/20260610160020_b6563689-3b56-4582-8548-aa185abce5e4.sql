@@ -1,0 +1,3 @@
+ALTER TABLE public.meal_transfers
+  ADD COLUMN IF NOT EXISTS consumed_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS consumed_by UUID REFERENCES auth.users(id) ON DELETE SET NULL;

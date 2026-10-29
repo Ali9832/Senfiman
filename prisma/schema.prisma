@@ -1,0 +1,728 @@
+// PostgreSQL schema reconstructed from the former Supabase migrations.
+// Authorization and workflows that formerly lived in RLS policies/triggers are
+// enforced by the server, not exposed to the client.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// ENUMS (PostgreSQL enum types, final state after ALTER TYPE ADD VALUE)
+// ---------------------------------------------------------------------------
+
+enum AppRole {
+  student
+  council_member
+  admin
+  warden
+  services
+  warehouse
+  council_secretary
+  central_council
+
+  @@map("app_role")
+}
+
+enum BuildingKind {
+  faculty
+  dorm
+  cafeteria
+  other
+
+  @@map("building_kind")
+}
+
+enum MealKind {
+  lunch
+  dinner
+
+  @@map("meal_kind")
+}
+
+enum TransferStatus {
+  pending
+  approved
+  rejected
+  consumed
+  expired
+
+  @@map("transfer_status")
+}
+
+enum TransferType {
+  send
+  request
+
+  @@map("transfer_type")
+}
+
+enum LockerStatus {
+  pending_payment
+  pending_approval
+  approved
+  rejected
+  expired
+
+  @@map("locker_status")
+}
+
+enum LockerPlan {
+  m1
+  m2
+  m3
+  semester
+
+  @@map("locker_plan")
+}
+
+enum LockerPriority {
+  host
+  guest
+
+  @@map("locker_priority")
+}
+
+enum QcLocation {
+  cafeteria
+  dorm
+  classroom
+  restroom
+
+  @@map("qc_location")
+}
+
+enum UniSystem {
+  food
+  library
+  internet
+
+  @@map("uni_system")
+}
+
+enum TicketCategory {
+  facilities
+  services
+  safety
+  admin
+  complaint
+
+  @@map("ticket_category")
+}
+
+enum TicketPriority {
+  critical
+  high
+  medium
+  low
+
+  @@map("ticket_priority")
+}
+
+enum TicketStatus {
+  submitted
+  pending_warden
+  assigned
+  awaiting_student_time
+  in_progress
+  needs_items
+  items_requested
+  items_ready
+  completed
+  closed
+  reopened
+  rejected
+  cancelled
+
+  @@map("ticket_status")
+}
+
+enum ComplaintKind {
+  complaint
+  criticism
+  suggestion
+
+  @@map("complaint_kind")
+}
+
+enum ComplaintStatus {
+  open
+  in_review
+  resolved
+  rejected
+
+  @@map("complaint_status")
+}
+
+enum ItemRequestStatus {
+  requested
+  fulfilled
+  cancelled
+
+  @@map("item_request_status")
+}
+
+// Source: faculty_inspections.inspection_type CHECK (classroom|hallway|restroom)
+enum InspectionType {
+  classroom
+  hallway
+  restroom
+
+  @@map("inspection_type")
+}
+
+// Source: faculty_locker_reservations.status CHECK (active|cancelled)
+enum FacultyReservationStatus {
+  active
+  cancelled
+
+  @@map("faculty_reservation_status")
+}
+
+// ---------------------------------------------------------------------------
+// AUTH
+// auth.users is a Supabase-managed table and is NOT defined by these migrations.
+// Every `REFERENCES auth.users(id)` in the source becomes a local FK to this model.
+// Only the id column is verified by the source; no email/password columns are
+// invented here. Authentication itself must be reimplemented outside the database.
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(uuid()) @db.Char(36)
+  email        String   @unique @db.VarChar(320)
+  passwordHash String   @map("password_hash") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  profile                Profile?
+  internetUsage          InternetUsage?
+  roles                  UserRole[]
+  sentMealTransfers      MealTransfer[]                @relation("MealTransferSender")
+  receivedMealTransfers  MealTransfer[]                @relation("MealTransferReceiver")
+  consumedMealTransfers  MealTransfer[]                @relation("MealTransferConsumer")
+  lockerReservations     LockerReservation[]           @relation("LockerReservationUser")
+  reviewedLockers        LockerReservation[]           @relation("LockerReservationReviewer")
+  lockerBans             LockerBan[]                   @relation("LockerBanUser")
+  lockerBansCreated      LockerBan[]                   @relation("LockerBanCreator")
+  ticketAttachments      TicketAttachment[]
+  universityCredentials  UniversityCredential[]
+  foodMenuCaches         FoodMenuCache[]
+  libraryLoans           LibraryLoan[]
+  qcInspections          QcInspection[]
+  pushSubscriptions      PushSubscription[]
+  ticketsCreated         Ticket[]                      @relation("TicketCreatedBy")
+  ticketsWarden          Ticket[]                      @relation("TicketWarden")
+  ticketsAssigned        Ticket[]                      @relation("TicketAssignee")
+  ticketEvents           TicketEvent[]
+  ticketComments         TicketComment[]
+  ticketSchedules        TicketSchedule[]
+  itemRequestsRequested  ItemRequest[]                 @relation("ItemRequestRequester")
+  itemRequestsFulfilled  ItemRequest[]                 @relation("ItemRequestFulfiller")
+  complaintsCreated      Complaint[]                   @relation("ComplaintCreator")
+  complaintsAssigned     Complaint[]                   @relation("ComplaintSecretary")
+  notifications          Notification[]
+  kbArticles             KbArticle[]
+  facultyInspections     FacultyInspection[]
+  facultyLockerBookings  FacultyLockerReservation[]
+
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// CORE
+// ---------------------------------------------------------------------------
+
+model Profile {
+  id                 String   @id @db.Char(36)
+  firstName          String?  @map("first_name") @db.Text
+  lastName           String?  @map("last_name") @db.Text
+  studentCode        String?  @unique @map("student_code") @db.VarChar(191)
+  faculty            String?  @db.Text
+  major              String?  @db.Text
+  phone              String?  @db.Text
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @default(now()) @map("updated_at")
+  residentBuildingId String?  @map("resident_building_id") @db.Char(36)
+
+  user             User      @relation(fields: [id], references: [id], onDelete: Cascade)
+  residentBuilding Building? @relation(fields: [residentBuildingId], references: [id], onDelete: SetNull)
+
+  @@index([residentBuildingId])
+  @@map("profiles")
+}
+
+model UserRole {
+  id        String   @id @default(uuid()) @db.Char(36)
+  userId    String   @map("user_id") @db.Char(36)
+  role      AppRole
+  faculty   String?  @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+  @@map("user_roles")
+}
+
+model Building {
+  id        String       @id @default(uuid()) @db.Char(36)
+  name      String       @unique @db.VarChar(191)
+  kind      BuildingKind
+  capacity  Int?
+  notes     String?      @db.Text
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @default(now()) @map("updated_at")
+
+  profiles           Profile[]
+  lockerReservations LockerReservation[]
+  qcInspections      QcInspection[]
+  tickets            Ticket[]
+
+  @@map("buildings")
+}
+
+// ---------------------------------------------------------------------------
+// MEALS
+// ---------------------------------------------------------------------------
+
+model MealTransfer {
+  id                  String         @id @default(uuid()) @db.Char(36)
+  senderId            String         @map("sender_id") @db.Char(36)
+  receiverId          String?        @map("receiver_id") @db.Char(36)
+  receiverStudentCode String         @map("receiver_student_code") @db.Text
+  receiverLastName    String         @map("receiver_last_name") @db.Text
+  mealDate            DateTime       @map("meal_date") @db.Date
+  mealKind            MealKind       @map("meal_kind")
+  mealName            String?        @map("meal_name") @db.Text
+  transferType        TransferType   @default(send) @map("transfer_type")
+  status              TransferStatus @default(pending)
+  // Source default: encode(gen_random_bytes(16),'hex') — must be generated in app code.
+  qrToken             String         @unique @map("qr_token") @db.VarChar(191)
+  createdAt           DateTime       @default(now()) @map("created_at")
+  respondedAt         DateTime?      @map("responded_at")
+  consumedAt          DateTime?      @map("consumed_at")
+  consumedBy          String?        @map("consumed_by") @db.Char(36)
+
+  sender   User  @relation("MealTransferSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver User? @relation("MealTransferReceiver", fields: [receiverId], references: [id], onDelete: SetNull)
+  consumer User? @relation("MealTransferConsumer", fields: [consumedBy], references: [id], onDelete: SetNull)
+
+  @@index([senderId])
+  @@index([receiverId])
+  @@index([consumedBy])
+  @@map("meal_transfers")
+}
+
+model FoodMenuCache {
+  id        String   @id @default(uuid()) @db.Char(36)
+  userId    String   @map("user_id") @db.Char(36)
+  weekStart DateTime @map("week_start") @db.Date
+  payload   Json
+  fetchedAt DateTime @default(now()) @map("fetched_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, weekStart])
+  @@map("food_menu_cache")
+}
+
+// ---------------------------------------------------------------------------
+// LOCKERS (dorm / receipt based)
+// ---------------------------------------------------------------------------
+
+model LockerReservation {
+  id           String          @id @default(uuid()) @db.Char(36)
+  userId       String          @map("user_id") @db.Char(36)
+  lockerNumber String          @map("locker_number") @db.Text
+  building     String          @db.Text
+  plan         LockerPlan
+  price        Int
+  status       LockerStatus    @default(pending_payment)
+  receiptPath  String?         @map("receipt_path") @db.Text
+  reviewerId   String?         @map("reviewer_id") @db.Char(36)
+  reviewerNote String?         @map("reviewer_note") @db.Text
+  startsAt     DateTime?       @map("starts_at") @db.Date
+  endsAt       DateTime?       @map("ends_at") @db.Date
+  // Source default: now() + INTERVAL '10 minutes' — expression default is not portable,
+  // must be set explicitly by the application.
+  paymentDeadline DateTime     @map("payment_deadline")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @default(now()) @map("updated_at")
+  buildingId   String?         @map("building_id") @db.Char(36)
+  // Set by the set_locker_priority() PostgreSQL trigger — reimplement in app layer.
+  priorityTier LockerPriority? @map("priority_tier")
+
+  user         User      @relation("LockerReservationUser", fields: [userId], references: [id], onDelete: Cascade)
+  reviewer     User?     @relation("LockerReservationReviewer", fields: [reviewerId], references: [id], onDelete: NoAction)
+  buildingRef  Building? @relation(fields: [buildingId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([reviewerId])
+  @@index([buildingId])
+  @@map("locker_reservations")
+}
+
+model LockerBan {
+  id          String   @id @default(uuid()) @db.Char(36)
+  userId      String   @map("user_id") @db.Char(36)
+  reason      String   @db.Text
+  bannedUntil DateTime @map("banned_until")
+  createdBy   String?  @map("created_by") @db.Char(36)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user    User  @relation("LockerBanUser", fields: [userId], references: [id], onDelete: Cascade)
+  creator User? @relation("LockerBanCreator", fields: [createdBy], references: [id], onDelete: NoAction)
+
+  @@index([userId])
+  @@index([createdBy])
+  @@map("locker_bans")
+}
+
+// ---------------------------------------------------------------------------
+// FACULTY QC + LOCKER GRID
+// ---------------------------------------------------------------------------
+
+model FacultyInspection {
+  id             String         @id @default(uuid()) @db.Char(36)
+  userId         String         @map("user_id") @db.Char(36)
+  facultyId      String         @map("faculty_id") @db.VarChar(191)
+  inspectionType InspectionType @map("inspection_type")
+  locationValue  String         @map("location_value") @db.Text
+  results        Json
+  details        Json
+  customItems    Json           @map("custom_items")
+  createdAt      DateTime       @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([facultyId], map: "idx_fi_faculty")
+  @@index([userId], map: "idx_fi_user")
+  @@map("faculty_inspections")
+}
+
+model FacultyLocker {
+  id          String   @id @default(uuid()) @db.Char(36)
+  facultyId   String   @map("faculty_id") @db.VarChar(191)
+  number      Int
+  isAvailable Boolean  @default(true) @map("is_available")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  reservations FacultyLockerReservation[]
+
+  @@unique([facultyId, number])
+  @@map("faculty_lockers")
+}
+
+model FacultyLockerReservation {
+  id          String                   @id @default(uuid()) @db.Char(36)
+  lockerId    String                   @map("locker_id") @db.Char(36)
+  userId      String                   @map("user_id") @db.Char(36)
+  status      FacultyReservationStatus @default(active)
+  reservedAt  DateTime                 @default(now()) @map("reserved_at")
+  cancelledAt DateTime?                @map("cancelled_at")
+
+  locker FacultyLocker @relation(fields: [lockerId], references: [id], onDelete: Cascade)
+  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // NOTE: the source enforces "one ACTIVE reservation per locker" and
+  // "one ACTIVE reservation per user" via PostgreSQL partial unique indexes
+  // (WHERE status = 'active'). MySQL has no partial indexes; these two rules
+  // must be enforced in the application layer (or via a generated column).
+  @@index([lockerId])
+  @@index([userId])
+  @@map("faculty_locker_reservations")
+}
+
+// ---------------------------------------------------------------------------
+// QC (building based, v1)
+// ---------------------------------------------------------------------------
+
+model QcInspection {
+  id            String     @id @default(uuid()) @db.Char(36)
+  userId        String     @map("user_id") @db.Char(36)
+  buildingId    String?    @map("building_id") @db.Char(36)
+  locationType  QcLocation @map("location_type")
+  locationValue String     @map("location_value") @db.Text
+  scores        Json
+  // Source CHECK: overall_rating BETWEEN 1 AND 5 — validate in app layer.
+  overallRating Int?       @map("overall_rating") @db.SmallInt
+  notes         String?    @db.Text
+  photoPath     String?    @map("photo_path") @db.Text
+  createdAt     DateTime   @default(now()) @map("created_at")
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  building Building? @relation(fields: [buildingId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([buildingId])
+  @@map("qc_inspections")
+}
+
+// ---------------------------------------------------------------------------
+// TICKETING
+// ---------------------------------------------------------------------------
+
+model Ticket {
+  id                String          @id @default(uuid()) @db.Char(36)
+  createdBy         String          @map("created_by") @db.Char(36)
+  buildingId        String?         @map("building_id") @db.Char(36)
+  roomNo            String?         @map("room_no") @db.Text
+  category          TicketCategory
+  prioritySuggested TicketPriority  @default(medium) @map("priority_suggested")
+  priorityFinal     TicketPriority? @map("priority_final")
+  title             String          @db.Text
+  description       String          @db.Text
+  // Source default 'submitted'; the tickets_set_defaults() trigger rewrites it to
+  // 'pending_warden' on insert — reimplement that rule in the app layer.
+  status            TicketStatus    @default(submitted)
+  wardenId          String?         @map("warden_id") @db.Char(36)
+  assignedTo        String?         @map("assigned_to") @db.Char(36)
+  // Computed by the tickets_set_defaults() trigger from the priority SLA table.
+  slaDueAt          DateTime?       @map("sla_due_at")
+  closedAt          DateTime?       @map("closed_at")
+  // Source CHECK: satisfaction BETWEEN 1 AND 5 — validate in app layer.
+  satisfaction      Int?            @db.SmallInt
+  satisfactionNote  String?         @map("satisfaction_note") @db.Text
+  reopenCount       Int             @default(0) @map("reopen_count")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @default(now()) @map("updated_at")
+
+  creator  User      @relation("TicketCreatedBy", fields: [createdBy], references: [id], onDelete: Cascade)
+  building Building? @relation(fields: [buildingId], references: [id], onDelete: NoAction)
+  warden   User?     @relation("TicketWarden", fields: [wardenId], references: [id], onDelete: NoAction)
+  assignee User?     @relation("TicketAssignee", fields: [assignedTo], references: [id], onDelete: NoAction)
+
+  events       TicketEvent[]
+  comments     TicketComment[]
+  schedules    TicketSchedule[]
+  itemRequests ItemRequest[]
+  notifications Notification[]
+
+  @@index([createdBy])
+  @@index([wardenId])
+  @@index([assignedTo])
+  @@index([status])
+  @@index([buildingId])
+  @@map("tickets")
+}
+
+model TicketEvent {
+  id         String        @id @default(uuid()) @db.Char(36)
+  ticketId   String        @map("ticket_id") @db.Char(36)
+  actorId    String?       @map("actor_id") @db.Char(36)
+  action     String        @db.Text
+  fromStatus TicketStatus? @map("from_status")
+  toStatus   TicketStatus? @map("to_status")
+  note       String?       @db.Text
+  createdAt  DateTime      @default(now()) @map("created_at")
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor  User?  @relation(fields: [actorId], references: [id], onDelete: NoAction)
+
+  @@index([ticketId])
+  @@index([actorId])
+  @@map("ticket_events")
+}
+
+model TicketComment {
+  id         String   @id @default(uuid()) @db.Char(36)
+  ticketId   String   @map("ticket_id") @db.Char(36)
+  userId     String   @map("user_id") @db.Char(36)
+  body       String   @db.Text
+  isInternal Boolean  @default(false) @map("is_internal")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: NoAction)
+
+  @@index([ticketId])
+  @@index([userId])
+  @@map("ticket_comments")
+}
+
+model TicketSchedule {
+  id               String    @id @default(uuid()) @db.Char(36)
+  ticketId         String    @map("ticket_id") @db.Char(36)
+  proposedBy       String?   @map("proposed_by") @db.Char(36)
+  proposedAt       DateTime  @map("proposed_at")
+  studentConfirmed Boolean?  @map("student_confirmed")
+  confirmedAt      DateTime? @map("confirmed_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  proposer User?  @relation(fields: [proposedBy], references: [id], onDelete: NoAction)
+
+  @@index([ticketId])
+  @@index([proposedBy])
+  @@map("ticket_schedules")
+}
+
+// ticket_id here is TEXT in the source (no FK to tickets) — preserved as-is.
+model TicketAttachment {
+  id        String   @id @default(uuid()) @db.Char(36)
+  ticketId  String   @map("ticket_id") @db.Text
+  userId    String   @map("user_id") @db.Char(36)
+  filePath  String   @map("file_path") @db.Text
+  mimeType  String?  @map("mime_type") @db.Text
+  sizeBytes Int?     @map("size_bytes")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("ticket_attachments")
+}
+
+model ItemRequest {
+  id           String            @id @default(uuid()) @db.Char(36)
+  ticketId     String            @map("ticket_id") @db.Char(36)
+  requestedBy  String            @map("requested_by") @db.Char(36)
+  items        Json
+  notes        String?           @db.Text
+  status       ItemRequestStatus @default(requested)
+  fulfilledBy  String?           @map("fulfilled_by") @db.Char(36)
+  fulfilledAt  DateTime?         @map("fulfilled_at")
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @default(now()) @map("updated_at")
+
+  ticket    Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  requester User   @relation("ItemRequestRequester", fields: [requestedBy], references: [id], onDelete: NoAction)
+  fulfiller User?  @relation("ItemRequestFulfiller", fields: [fulfilledBy], references: [id], onDelete: NoAction)
+
+  @@index([ticketId])
+  @@index([requestedBy])
+  @@index([fulfilledBy])
+  @@index([status])
+  @@map("item_requests")
+}
+
+model Complaint {
+  id                String          @id @default(uuid()) @db.Char(36)
+  createdBy         String?         @map("created_by") @db.Char(36)
+  isAnonymous       Boolean         @default(false) @map("is_anonymous")
+  kind              ComplaintKind
+  title             String          @db.Text
+  body              String          @db.Text
+  status            ComplaintStatus @default(open)
+  assignedSecretary String?         @map("assigned_secretary") @db.Char(36)
+  resolution        String?         @db.Text
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @default(now()) @map("updated_at")
+
+  creator   User? @relation("ComplaintCreator", fields: [createdBy], references: [id], onDelete: NoAction)
+  secretary User? @relation("ComplaintSecretary", fields: [assignedSecretary], references: [id], onDelete: NoAction)
+
+  @@index([createdBy])
+  @@index([assignedSecretary])
+  @@map("complaints")
+}
+
+model Notification {
+  id        String    @id @default(uuid()) @db.Char(36)
+  userId    String    @map("user_id") @db.Char(36)
+  ticketId  String?   @map("ticket_id") @db.Char(36)
+  title     String    @db.Text
+  body      String?   @db.Text
+  link      String?   @db.Text
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ticket Ticket? @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([ticketId])
+  @@map("notifications")
+}
+
+// ---------------------------------------------------------------------------
+// KNOWLEDGE BASE
+// ---------------------------------------------------------------------------
+
+model KbArticle {
+  id        String         @id @default(uuid()) @db.Char(36)
+  title     String         @db.Text
+  category  TicketCategory @default(facilities)
+  content   String         @db.Text
+  // Source type: TEXT[] DEFAULT '{}'. MySQL has no array type; stored as JSON array.
+  // A relational tag table was not introduced because no tag entity exists in the source.
+  tags      Json
+  published  Boolean       @default(true)
+  authorId  String?        @map("author_id") @db.Char(36)
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @default(now()) @map("updated_at")
+
+  author User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([authorId])
+  @@map("kb_articles")
+}
+
+// ---------------------------------------------------------------------------
+// EXTERNAL UNIVERSITY SYSTEMS
+// ---------------------------------------------------------------------------
+
+model UniversityCredential {
+  id                String    @id @default(uuid()) @db.Char(36)
+  userId            String    @map("user_id") @db.Char(36)
+  system            UniSystem
+  username          String    @db.Text
+  // Source relied on the pgsodium extension for encryption (later dropped);
+  // encryption/decryption must be done in the application layer.
+  passwordEncrypted String    @map("password_encrypted") @db.Text
+  updatedAt         DateTime  @default(now()) @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, system])
+  @@map("university_credentials")
+}
+
+model LibraryLoan {
+  id         String    @id @default(uuid()) @db.Char(36)
+  userId     String    @map("user_id") @db.Char(36)
+  title      String    @db.Text
+  author     String?   @db.Text
+  loanDate   DateTime? @map("loan_date") @db.Date
+  dueDate    DateTime  @map("due_date") @db.Date
+  returned   Boolean   @default(false)
+  externalId String?   @map("external_id") @db.Text
+  fetchedAt  DateTime  @default(now()) @map("fetched_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, dueDate], map: "idx_library_loans_user_due")
+  @@map("library_loans")
+}
+
+model InternetUsage {
+  userId    String    @id @map("user_id") @db.Char(36)
+  usedMb    BigInt    @default(0) @map("used_mb")
+  totalMb   BigInt    @default(0) @map("total_mb")
+  expiresAt DateTime? @map("expires_at")
+  fetchedAt DateTime  @default(now()) @map("fetched_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("internet_usage")
+}
+
+model PushSubscription {
+  id        String   @id @default(uuid()) @db.Char(36)
+  userId    String   @map("user_id") @db.Char(36)
+  endpoint  String   @unique @db.VarChar(191)
+  p256dh    String   @db.Text
+  authKey   String   @map("auth_key") @db.Text
+  userAgent String?  @map("user_agent") @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_subscriptions")
+}

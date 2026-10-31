@@ -5,6 +5,8 @@ import { join, resolve } from "node:path";
 import { createServer } from "node:net";
 
 const baseUrl = process.env.SMOKE_BASE_URL || "http://127.0.0.1:5173";
+const basePath = new URL(baseUrl).pathname.replace(/\/+$/, "");
+const appPath = (path) => `${basePath}${path}` || "/";
 const edge = process.env.EDGE_PATH || "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const port = await new Promise((resolvePort, rejectPort) => {
   const server = createServer();
@@ -120,7 +122,7 @@ async function login(cdp, label) {
   if (label === "کار دانشجویی") await cdp.clickText("مسئولان و شوراها");
   await cdp.waitFor(`document.body.innerText.includes(${JSON.stringify(label)})`);
   await cdp.clickText(label);
-  await cdp.waitFor("location.pathname === '/' && !document.body.innerText.includes('ورود به سامانه دانشجویی')");
+  await cdp.waitFor(`location.pathname === ${JSON.stringify(appPath("/"))} && !document.body.innerText.includes('ورود به سامانه دانشجویی')`);
 }
 
 let cdp;
@@ -165,7 +167,7 @@ try {
   await cdp.waitFor("document.querySelector('button[aria-label=\"باز کردن گفت‌وگو در صفحه کامل\"]')");
   await cdp.fill("textarea", "پیام نیمه‌تمام برای ادامه در صفحه کامل");
   await cdp.clickExpression("document.querySelector('button[aria-label=\"باز کردن گفت‌وگو در صفحه کامل\"]')");
-  await cdp.waitFor("location.pathname === '/communication' && location.search.includes('tab=chat')");
+  await cdp.waitFor(`location.pathname === ${JSON.stringify(appPath("/communication"))} && location.search.includes('tab=chat')`);
   record("انتقال گفت‌وگوی شناور به صفحه کامل با حفظ متن", await cdp.evaluate("document.querySelector('textarea')?.value === 'پیام نیمه‌تمام برای ادامه در صفحه کامل'"));
   await cdp.clickText("ارسال پیام");
   await cdp.waitFor("document.body.innerText.includes('پیام نیمه‌تمام برای ادامه در صفحه کامل')");
@@ -237,10 +239,10 @@ try {
   await cdp.navigate("/student-voice");
   record("بارگذاری صدای دانشجو", await cdp.evaluate("document.body.innerText.includes('ثبت پیام') && document.body.innerText.includes('ارزیابی')"));
   await cdp.navigate("/complaints");
-  await cdp.waitFor("location.pathname === '/student-voice'");
+  await cdp.waitFor(`location.pathname === ${JSON.stringify(appPath("/student-voice"))}`);
   record("هدایت مسیر قدیمی شکایت به صدای دانشجو", true);
   await cdp.navigate("/councils/mechanical");
-  await cdp.waitFor("location.pathname === '/council/mechanical'");
+  await cdp.waitFor(`location.pathname === ${JSON.stringify(appPath("/council/mechanical"))}`);
   record("هدایت مسیر قدیمی شورا به صفحه اختصاصی", true);
 
   const fullAccessRoutes = [

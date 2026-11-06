@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { SUPABASE_CONFIGURED, supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,7 @@ import { Receipt, Check, X, Eye, Loader2 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import { DEMO_MODE } from "@/lib/api";
 
 type Row = {
   id: string;
@@ -26,6 +27,7 @@ type Row = {
 };
 
 export default function CouncilLockerReceipts() {
+  const integrationAvailable = !DEMO_MODE && SUPABASE_CONFIGURED;
   const [rows, setRows] = useState<Row[]>([]);
   const [filter, setFilter] = useState<string>("pending_approval");
   const [open, setOpen] = useState<Row | null>(null);
@@ -34,6 +36,10 @@ export default function CouncilLockerReceipts() {
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
+    if (!integrationAvailable) {
+      setRows([]);
+      return;
+    }
     let q = supabase.from("locker_reservations").select("*").order("created_at", { ascending: false });
     if (filter !== "all") q = q.eq("status", filter as any);
     const { data, error } = await q;
@@ -41,11 +47,11 @@ export default function CouncilLockerReceipts() {
     setRows((data ?? []) as Row[]);
   };
 
-  useEffect(() => { load(); }, [filter]);
+  useEffect(() => { load(); }, [filter, integrationAvailable]);
 
   const openRow = async (r: Row) => {
     setOpen(r); setNote(r.reviewer_note ?? ""); setImageUrl(null);
-    if (r.receipt_path) {
+    if (r.receipt_path && integrationAvailable) {
       const { data } = await supabase.storage.from("locker-receipts").createSignedUrl(r.receipt_path, 300);
       setImageUrl(data?.signedUrl ?? null);
     }
@@ -53,6 +59,7 @@ export default function CouncilLockerReceipts() {
 
   const decide = async (status: "approved" | "rejected") => {
     if (!open) return;
+    if (!integrationAvailable) return toast.info("بررسی رسید واقعی در نسخه نمایشی غیرفعال است");
     setBusy(true);
     const { data: { user } } = await supabase.auth.getUser();
     const patch: any = {

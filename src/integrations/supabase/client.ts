@@ -3,8 +3,16 @@ import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 import { brokeredPreviewStorage } from './previewAuthStorage';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL?.trim();
+const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
+
+export const SUPABASE_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY);
+
+// Static demo builds (for example GitHub Pages) do not have Supabase secrets.
+// The SDK still needs syntactically valid, non-empty values during module import;
+// feature code checks SUPABASE_CONFIGURED before making any remote request.
+const RUNTIME_SUPABASE_URL = SUPABASE_URL || "http://127.0.0.1:54321";
+const RUNTIME_SUPABASE_KEY = SUPABASE_PUBLISHABLE_KEY || "demo-only-placeholder";
 
 
 function isNewSupabaseApiKey(value: string): boolean {
@@ -34,9 +42,9 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
-export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+export const supabase = createClient<Database>(RUNTIME_SUPABASE_URL, RUNTIME_SUPABASE_KEY, {
   global: {
-    fetch: createSupabaseFetch(SUPABASE_PUBLISHABLE_KEY),
+    fetch: createSupabaseFetch(RUNTIME_SUPABASE_KEY),
   },
   auth: {
     storage: brokeredPreviewStorage(),

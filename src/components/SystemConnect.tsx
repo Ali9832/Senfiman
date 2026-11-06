@@ -5,9 +5,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Link2, Unlink, Loader2, LucideIcon } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { SUPABASE_CONFIGURED, supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
+import { DEMO_MODE } from "@/lib/api";
 
 type System = "food" | "library" | "internet";
 
@@ -22,6 +23,7 @@ interface Props {
 
 export default function SystemConnect({ system, functionName, title, description, icon: Icon, hostLabel }: Props) {
   const { user } = useAuth();
+  const integrationAvailable = !DEMO_MODE && SUPABASE_CONFIGURED;
   const [connected, setConnected] = useState<{ username: string } | null>(null);
   const [open, setOpen] = useState(false);
   const [username, setUsername] = useState("");
@@ -29,7 +31,7 @@ export default function SystemConnect({ system, functionName, title, description
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !integrationAvailable) return;
     supabase
       .from("university_credentials")
       .select("username")
@@ -37,9 +39,10 @@ export default function SystemConnect({ system, functionName, title, description
       .eq("system", system)
       .maybeSingle()
       .then(({ data }) => setConnected(data ?? null));
-  }, [user, system]);
+  }, [user, system, integrationAvailable]);
 
   const save = async () => {
+    if (!integrationAvailable) return toast.info("اتصال سامانه در نسخه نمایشی غیرفعال است");
     if (!username || !password) return toast.error("کد دانشجویی و رمز را وارد کنید");
     setBusy(true);
     const { data, error } = await supabase.functions.invoke(functionName, {
@@ -54,6 +57,7 @@ export default function SystemConnect({ system, functionName, title, description
   };
 
   const disconnect = async () => {
+    if (!integrationAvailable) return toast.info("اتصال سامانه در نسخه نمایشی غیرفعال است");
     setBusy(true);
     await supabase.functions.invoke(functionName, { body: { action: "delete_creds" } });
     setBusy(false);
@@ -69,7 +73,12 @@ export default function SystemConnect({ system, functionName, title, description
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {connected ? (
+        {!integrationAvailable ? (
+          <div className="space-y-2">
+            <Badge variant="secondary">نسخه نمایشی</Badge>
+            <p className="text-sm text-muted-foreground">اتصال واقعی به {hostLabel} پس از تنظیم Supabase در نسخه عملیاتی فعال می‌شود.</p>
+          </div>
+        ) : connected ? (
           <div className="flex items-center justify-between">
             <div>
               <Badge className="bg-green-500/10 text-green-700 dark:text-green-400 border-green-200 dark:border-green-900 mb-1">

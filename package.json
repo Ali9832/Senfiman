@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "dev:server": "tsx watch server/index.ts",
-    "build": "tsc --noEmit -p tsconfig.app.json && vite build --config vite.config.ts",
+    "build": "npm run check:server && tsc --noEmit -p tsconfig.app.json && vite build --config vite.config.ts",
+    "check:server": "tsc --noEmit --skipLibCheck --module esnext --moduleResolution bundler --target es2020 --esModuleInterop server/index.ts server/auth.ts",
     "build:pages": "tsc --noEmit -p tsconfig.app.json && vite build --config vite.config.ts --base=/Senfiman/",
     "preview": "vite preview",
     "test:smoke": "node scripts/smoke-test.mjs",

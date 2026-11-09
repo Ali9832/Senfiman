@@ -189,7 +189,7 @@ app.get("/api/dorms/:buildingId/rooms", requireAuth, async (req, res, next) => {
 app.post("/api/dorms/:buildingId/rooms", requireAuth, requireRole(AppRole.admin), async (req, res, next) => {
   try {
     const { buildingId } = z.object({ buildingId: z.string().uuid() }).parse(req.params);
-    const body = dormRoomInput.parse(req.body);
+    const body = dormRoomInput.parse(req.body) as { number: string; floor: string; capacity: number };
     const building = await prisma.building.findFirst({ where: { id: buildingId, kind: BuildingKind.dorm }, select: { id: true } });
     if (!building) return res.status(404).json({ error: "Dormitory not found." });
     const room = await prisma.dormRoom.create({ data: { buildingId, ...body } });

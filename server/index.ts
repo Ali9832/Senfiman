@@ -1,7 +1,5 @@
 import "dotenv/config";
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
@@ -23,11 +21,13 @@ import {
   issueSession,
   prisma,
   publicUser,
+  publicDormTestEmail,
+  publicDormTestUserId,
   requireAuth,
   requireRole,
   type AuthenticatedRequest,
   verifyPassword,
-} from "./auth";
+} from "./auth.js";
 
 export const app = express();
 const port = Number(process.env.PORT ?? 3001);
@@ -56,6 +56,8 @@ const authRateLimit = (req: express.Request, res: express.Response, next: expres
   return next();
 };
 
+// Behind Vercel the client IP is in X-Forwarded-For; without this every user shares one rate-limit bucket.
+app.set("trust proxy", process.env.VERCEL ? 1 : false);
 app.disable("x-powered-by");
 app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -65,14 +67,15 @@ app.use((_req, res, next) => {
   next();
 });
 app.use(cors({ origin: frontendOrigin, credentials: true }));
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "4mb" }));
 app.use(cookieParser());
 
-const storageRoot = path.resolve(process.env.STORAGE_ROOT ?? "./storage");
+// Vercel rejects request bodies over 4.5 MB (base64 adds ~33%), so keep files small.
+const MAX_ATTACHMENT_BYTES = 3 * 1024 * 1024;
 const attachmentInput = z.object({
   fileName: z.string().trim().min(1).max(255),
   mimeType: z.string().trim().max(150).optional(),
-  sizeBytes: z.number().int().positive().max(10 * 1024 * 1024),
+  sizeBytes: z.number().int().positive().max(MAX_ATTACHMENT_BYTES),
   data: z.string().regex(/^[A-Za-z0-9+/=]+$/),
 });
 
@@ -140,6 +143,9 @@ app.post("/api/auth/logout", (_req, res) => {
 
 app.get("/api/auth/me", requireAuth, async (req: AuthenticatedRequest, res, next) => {
   try {
+    if (req.auth!.publicDormTest) {
+      return res.json({ user: { id: publicDormTestUserId, email: publicDormTestEmail, firstName: "حالت", lastName: "آزمایشی", studentCode: null, roles: [AppRole.admin] } });
+    }
     const user = await prisma.user.findUnique({ where: { id: req.auth!.userId }, select: authSelect });
     if (!user) {
       clearSession(res);
@@ -151,7 +157,7 @@ app.get("/api/auth/me", requireAuth, async (req: AuthenticatedRequest, res, next
   }
 });
 
-app.get("/api/buildings", requireAuth, async (req, res, next) => {
+app.get("/api/buildings", requireAuth, async (req: AuthenticatedRequest, res, next) => {
   try {
     const kind = z.enum(["faculty", "dorm", "cafeteria", "other"]).optional().parse(req.query.kind);
     const buildings = await prisma.building.findMany({
@@ -162,6 +168,54 @@ app.get("/api/buildings", requireAuth, async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+const dormRoomInput = z.object({
+  number: z.string().trim().min(1).max(100),
+  floor: z.string().trim().min(1).max(100),
+  capacity: z.number().int().min(1).max(1000),
+}).strict();
+
+app.get("/api/dorms/:buildingId/rooms", requireAuth, async (req, res, next) => {
+  try {
+    const { buildingId } = z.object({ buildingId: z.string().uuid() }).parse(req.params);
+    const building = await prisma.building.findFirst({ where: { id: buildingId, kind: BuildingKind.dorm }, select: { id: true } });
+    if (!building) return res.status(404).json({ error: "Dormitory not found." });
+    const rooms = await prisma.dormRoom.findMany({ where: { buildingId }, orderBy: [{ floor: "asc" }, { number: "asc" }] });
+    return res.json({ rooms });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/dorms/:buildingId/rooms", requireAuth, requireRole(AppRole.admin), async (req, res, next) => {
+  try {
+    const { buildingId } = z.object({ buildingId: z.string().uuid() }).parse(req.params);
+    const body = dormRoomInput.parse(req.body);
+    const building = await prisma.building.findFirst({ where: { id: buildingId, kind: BuildingKind.dorm }, select: { id: true } });
+    if (!building) return res.status(404).json({ error: "Dormitory not found." });
+    const room = await prisma.dormRoom.create({ data: { buildingId, ...body } });
+    return res.status(201).json({ room });
+  } catch (error) { next(error); }
+});
+
+app.patch("/api/dorms/:buildingId/rooms/:roomId", requireAuth, requireRole(AppRole.admin), async (req, res, next) => {
+  try {
+    const { buildingId, roomId } = z.object({ buildingId: z.string().uuid(), roomId: z.string().uuid() }).parse(req.params);
+    const body = dormRoomInput.partial().refine((value) => Object.keys(value).length > 0).parse(req.body);
+    const result = await prisma.dormRoom.updateMany({ where: { id: roomId, buildingId, building: { kind: BuildingKind.dorm } }, data: body });
+    if (!result.count) return res.status(404).json({ error: "Room not found." });
+    const room = await prisma.dormRoom.findUnique({ where: { id: roomId } });
+    return res.json({ room });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/dorms/:buildingId/rooms/:roomId/inspections", requireAuth, requireRole(AppRole.admin, AppRole.council_member, AppRole.central_council), async (req, res, next) => {
+  try {
+    const { buildingId, roomId } = z.object({ buildingId: z.string().uuid(), roomId: z.string().uuid() }).parse(req.params);
+    const room = await prisma.dormRoom.findFirst({ where: { id: roomId, buildingId, building: { kind: BuildingKind.dorm } }, select: { id: true } });
+    if (!room) return res.status(404).json({ error: "Room not found." });
+    const inspections = await prisma.dormRoomInspection.findMany({ where: { roomId }, orderBy: { createdAt: "desc" }, take: 200 });
+    return res.json({ inspections });
+  } catch (error) { next(error); }
 });
 
 app.get("/api/profile/me", requireAuth, async (req: AuthenticatedRequest, res, next) => {
@@ -547,7 +601,7 @@ app.post("/api/tickets/:id/attachments", requireAuth, async (req: AuthenticatedR
     if (!ticket) return res.status(404).json({ error: "Ticket not found." });
     const body = attachmentInput.parse(req.body);
     const buffer = Buffer.from(body.data, "base64");
-    if (buffer.length !== body.sizeBytes || buffer.length > 10 * 1024 * 1024) {
+    if (buffer.length !== body.sizeBytes || buffer.length > MAX_ATTACHMENT_BYTES) {
       return res.status(400).json({ error: "Invalid attachment size." });
     }
     const safeName = body.fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -558,11 +612,9 @@ app.post("/api/tickets/:id/attachments", requireAuth, async (req: AuthenticatedR
         filePath: `${req.auth!.userId}/${id}/${safeName}`,
         mimeType: body.mimeType ?? null,
         sizeBytes: buffer.length,
+        data: buffer,
       },
     });
-    const filePath = path.join(storageRoot, attachment.filePath);
-    await mkdir(path.dirname(filePath), { recursive: true });
-    await writeFile(filePath, buffer, { flag: "wx" });
     return res.status(201).json({ attachment: { id: attachment.id, fileName: safeName, mimeType: attachment.mimeType, sizeBytes: attachment.sizeBytes } });
   } catch (error) {
     next(error);
@@ -574,7 +626,8 @@ app.get("/api/ticket-attachments/:id", requireAuth, async (req: AuthenticatedReq
     const id = z.string().min(1).parse(req.params.id);
     const attachment = await prisma.ticketAttachment.findUnique({ where: { id } });
     if (!attachment || !await getTicketForUser(attachment.ticketId, req)) return res.status(404).json({ error: "Attachment not found." });
-    const buffer = await readFile(path.join(storageRoot, attachment.filePath));
+    if (!attachment.data) return res.status(404).json({ error: "Attachment file is missing." });
+    const buffer = Buffer.from(attachment.data);
     res.setHeader("Content-Type", attachment.mimeType ?? "application/octet-stream");
     res.setHeader("Content-Length", buffer.length);
     return res.send(buffer);
@@ -990,6 +1043,18 @@ const facultyInspectionInput = z.object({
   details: z.record(z.string(), z.string().max(10_000)),
   customItems: z.array(z.object({ id: z.string().min(1), label: z.string().trim().min(1).max(500) })).max(100),
 }).strict();
+const dormRoomChecklist = ["beds", "closet", "lighting", "cooling", "heating", "sockets", "window", "internet", "cleanliness"];
+const dormRoomInspectionInput = facultyInspectionInput.extend({ inspectionType: z.literal("room") }).superRefine((body, context) => {
+  const ids = [...dormRoomChecklist, ...body.customItems.map((item) => item.id)];
+  if (new Set(ids).size !== ids.length || Object.keys(body.results).some((id) => !ids.includes(id))) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid checklist items." });
+  }
+  for (const id of ids) {
+    if (!body.results[id] || (body.results[id] === "notok" && !body.details[id]?.trim())) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: `Complete checklist item: ${id}` });
+    }
+  }
+});
 
 app.get("/api/qc/inspections", requireAuth, async (req: AuthenticatedRequest, res, next) => {
   try {
@@ -1005,6 +1070,21 @@ app.get("/api/qc/inspections", requireAuth, async (req: AuthenticatedRequest, re
 
 app.post("/api/qc/inspections", requireAuth, async (req: AuthenticatedRequest, res, next) => {
   try {
+    if (req.body?.inspectionType === "room" && req.body?.facultyId) {
+      if (!hasAnyRole(req.auth!.roles, AppRole.admin, AppRole.council_member, AppRole.central_council)) {
+        return res.status(403).json({ error: "You do not have permission to perform this action." });
+      }
+      const body = dormRoomInspectionInput.parse(req.body);
+      const room = await prisma.dormRoom.findFirst({
+        where: { buildingId: body.facultyId, number: body.locationValue, building: { kind: BuildingKind.dorm } },
+        select: { id: true },
+      });
+      if (!room) return res.status(404).json({ error: "Room not found. Register the room first." });
+      const inspection = await prisma.dormRoomInspection.create({
+        data: { roomId: room.id, userId: req.auth!.userId, results: body.results, details: body.details, customItems: body.customItems },
+      });
+      return res.status(201).json({ inspection });
+    }
     if (req.body && typeof req.body === "object" && "facultyId" in req.body) {
       const body = facultyInspectionInput.parse(req.body);
       const inspection = await prisma.facultyInspection.create({
@@ -1109,7 +1189,7 @@ app.post("/api/notifications/mark-all-read", requireAuth, async (req: Authentica
   }
 });
 
-app.get("/api/admin/overview", requireAuth, requireRole(AppRole.admin), async (_req, res, next) => {
+app.get("/api/admin/overview", requireAuth, requireRole(AppRole.admin), async (req: AuthenticatedRequest, res, next) => {
   try {
     const [buildings, profiles, roleRows, users, transfers, lockers, qc] = await Promise.all([
       prisma.building.findMany({ orderBy: { name: "asc" } }),
@@ -1140,7 +1220,7 @@ app.get("/api/admin/overview", requireAuth, requireRole(AppRole.admin), async (_
   }
 });
 
-app.post("/api/admin/buildings", requireAuth, requireRole(AppRole.admin), async (req, res, next) => {
+app.post("/api/admin/buildings", requireAuth, requireRole(AppRole.admin), async (req: AuthenticatedRequest, res, next) => {
   try {
     const body = z.object({
       name: z.string().trim().min(1).max(191),
@@ -1217,12 +1297,12 @@ app.put("/api/admin/users/:userId/roles/:role", requireAuth, requireRole(AppRole
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (error instanceof z.ZodError) return res.status(400).json({ error: "Invalid request.", details: error.flatten() });
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-    return res.status(409).json({ error: "Email or student code is already in use." });
+    return res.status(409).json({ error: "A record with these unique values already exists." });
   }
   console.error(error);
   return res.status(500).json({ error: "Internal server error." });
 });
 
-if (process.env.NODE_ENV !== "test") {
+if (process.env.NODE_ENV !== "test" && !process.env.VERCEL) {
   app.listen(port, () => console.log(`API listening on http://localhost:${port}`));
 }

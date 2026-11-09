@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { DormRooms } from "@/components/DormRooms";
+import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +26,8 @@ const ROLE_LABELS: Record<Role, string> = {
 };
 
 export default function Admin() {
+  const { user } = useAuth();
+  const publicTest = user?.email === "public-dorm-test@invalid.example";
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [newName, setNewName] = useState("");
   const [newKind, setNewKind] = useState<string>("faculty");
@@ -144,7 +148,7 @@ export default function Admin() {
     <div className="space-y-6 max-w-5xl mx-auto" dir="rtl">
       <h1 className="text-2xl font-bold flex items-center gap-2">
         <BarChart3 className="h-6 w-6 text-primary" /> پنل مدیریت
-        <Badge variant="secondary">نقش: ادمین</Badge>
+        <Badge variant="secondary">{publicTest ? "آزمایش بدون ورود" : "نقش: ادمین"}</Badge>
       </h1>
 
       {stats && (
@@ -201,6 +205,7 @@ export default function Admin() {
                   </div>
                 ))}
               </div>
+              <DormRooms buildings={buildings} />
             </CardContent>
           </Card>
         </TabsContent>

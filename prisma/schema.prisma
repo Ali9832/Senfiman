@@ -3,7 +3,8 @@
 // enforced by the server, not exposed to the client.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
@@ -227,6 +228,7 @@ model User {
   notifications          Notification[]
   kbArticles             KbArticle[]
   facultyInspections     FacultyInspection[]
+  dormRoomInspections    DormRoomInspection[]
   facultyLockerBookings  FacultyLockerReservation[]
 
   @@map("users")
@@ -281,8 +283,42 @@ model Building {
   lockerReservations LockerReservation[]
   qcInspections      QcInspection[]
   tickets            Ticket[]
+  dormRooms          DormRoom[]
 
   @@map("buildings")
+}
+
+model DormRoom {
+  id          String   @id @default(uuid()) @db.Char(36)
+  buildingId  String   @map("building_id") @db.Char(36)
+  number      String   @db.VarChar(100)
+  floor       String   @db.VarChar(100)
+  capacity    Int
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  building    Building             @relation(fields: [buildingId], references: [id], onDelete: Restrict)
+  inspections DormRoomInspection[]
+
+  @@unique([buildingId, number])
+  @@map("dorm_rooms")
+}
+
+model DormRoomInspection {
+  id          String   @id @default(uuid()) @db.Char(36)
+  roomId      String   @map("room_id") @db.Char(36)
+  userId      String   @map("user_id") @db.Char(36)
+  results     Json
+  details     Json
+  customItems Json     @map("custom_items")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  room DormRoom @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  user User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([roomId, createdAt])
+  @@index([userId])
+  @@map("dorm_room_inspections")
 }
 
 // ---------------------------------------------------------------------------
@@ -569,6 +605,7 @@ model TicketAttachment {
   filePath  String   @map("file_path") @db.Text
   mimeType  String?  @map("mime_type") @db.Text
   sizeBytes Int?     @map("size_bytes")
+  data      Bytes?
   createdAt DateTime @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)

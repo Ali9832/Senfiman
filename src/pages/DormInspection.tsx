@@ -135,10 +135,18 @@ type FormData = z.infer<typeof schema>;
 
 type Result = "ok" | "notok" | null;
 type Dorm = { id: string; name: string };
+type Room = { id: string; number: string; floor: string; capacity: number };
+type RoomInspection = { id: string; createdAt: string; results: Record<string, "ok" | "notok">; details: Record<string, string>; customItems: { id: string; label: string }[] };
 
 export default function DormInspection() {
   const { user } = useAuth();
   const [dorms, setDorms] = useState<Dorm[]>([]);
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [history, setHistory] = useState<RoomInspection[]>([]);
+  const [roomsLoading, setRoomsLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [roomsError, setRoomsError] = useState(false);
+  const [historyError, setHistoryError] = useState(false);
   const [step, setStep] = useState<"form" | "inspection">("form");
   const [formData, setFormData] = useState<FormData | null>(null);
   const [items, setItems] = useState<Item[]>([]);
@@ -156,12 +164,39 @@ export default function DormInspection() {
     mode: "onChange",
   });
   const watchType = form.watch("inspectionType") as DormType;
+  const watchDorm = form.watch("dormId");
+  const watchLocation = form.watch("locationValue");
+  const selectedRoom = rooms.find((room) => room.number === watchLocation);
 
   useEffect(() => {
     api<{ buildings: Dorm[] }>("/api/buildings?kind=dorm")
       .then(({ buildings }) => setDorms(buildings))
       .catch(() => toast.error("خطا در دریافت خوابگاه‌ها"));
   }, []);
+
+  useEffect(() => {
+    if (!watchDorm || watchType !== "room") { setRooms([]); return; }
+    let active = true;
+    setRoomsLoading(true);
+    setRoomsError(false);
+    api<{ rooms: Room[] }>(`/api/dorms/${watchDorm}/rooms`)
+      .then(({ rooms: data }) => { if (active) setRooms(data); })
+      .catch(() => { if (active) { setRooms([]); setRoomsError(true); } })
+      .finally(() => { if (active) setRoomsLoading(false); });
+    return () => { active = false; };
+  }, [watchDorm, watchType]);
+
+  useEffect(() => {
+    if (!watchDorm || watchType !== "room" || !selectedRoom) { setHistory([]); setHistoryError(false); return; }
+    let active = true;
+    setHistoryLoading(true);
+    setHistoryError(false);
+    api<{ inspections: RoomInspection[] }>(`/api/dorms/${watchDorm}/rooms/${selectedRoom.id}/inspections`)
+      .then(({ inspections }) => { if (active) setHistory(inspections); })
+      .catch(() => { if (active) { setHistory([]); setHistoryError(true); } })
+      .finally(() => { if (active) setHistoryLoading(false); });
+    return () => { active = false; };
+  }, [watchDorm, watchType, selectedRoom?.id, step]);
 
   const onStart = (data: FormData) => {
     setFormData(data);
@@ -245,7 +280,7 @@ export default function DormInspection() {
             <form onSubmit={form.handleSubmit(onStart, onInvalid)} className="space-y-5">
               <div>
                 <Label>خوابگاه</Label>
-                <Select value={form.watch("dormId")} onValueChange={(v) => form.setValue("dormId", v, { shouldValidate: true })}>
+                <Select value={form.watch("dormId")} onValueChange={(v) => { form.setValue("dormId", v, { shouldValidate: true }); form.setValue("locationValue", ""); }}>
                   <SelectTrigger className={form.formState.errors.dormId ? "border-destructive" : ""}>
                     <SelectValue placeholder="انتخاب خوابگاه" />
                   </SelectTrigger>
@@ -265,7 +300,7 @@ export default function DormInspection() {
                       type="button"
                       variant={watchType === t ? "default" : "outline"}
                       className="h-11 text-sm"
-                      onClick={() => form.setValue("inspectionType", t, { shouldValidate: true })}
+                      onClick={() => { form.setValue("inspectionType", t, { shouldValidate: true }); form.setValue("locationValue", ""); }}
                     >
                       {TYPE_META[t].label}
                     </Button>
@@ -275,13 +310,24 @@ export default function DormInspection() {
 
               <div>
                 <Label>{TYPE_META[watchType].field}</Label>
-                <Input
-                  {...form.register("locationValue")}
-                  placeholder={TYPE_META[watchType].placeholder}
-                  className={form.formState.errors.locationValue ? "border-destructive" : ""}
-                />
+                {watchType === "room" ? <>
+                  <Select value={watchLocation} onValueChange={(value) => form.setValue("locationValue", value, { shouldValidate: true })} disabled={!watchDorm || roomsLoading || roomsError}>
+                    <SelectTrigger className={form.formState.errors.locationValue ? "border-destructive" : ""}><SelectValue placeholder={roomsLoading ? "در حال دریافت اتاق‌ها..." : "انتخاب اتاق"} /></SelectTrigger>
+                    <SelectContent>{rooms.map((room) => <SelectItem key={room.id} value={room.number}>اتاق {room.number} · طبقه {room.floor} · ظرفیت {room.capacity}</SelectItem>)}</SelectContent>
+                  </Select>
+                  {roomsError && <p role="alert" className="text-xs text-destructive mt-1">دریافت اتاق‌ها ناموفق بود. دوباره خوابگاه را انتخاب کنید.</p>}
+                  {watchDorm && !roomsLoading && !roomsError && rooms.length === 0 && <p className="text-xs text-muted-foreground mt-1">اتاقی ثبت نشده است؛ مدیر باید ابتدا اتاق را اضافه کند.</p>}
+                </> : <Input {...form.register("locationValue")} placeholder={TYPE_META[watchType].placeholder} className={form.formState.errors.locationValue ? "border-destructive" : ""} />}
                 {form.formState.errors.locationValue && <p className="text-xs text-destructive mt-1">{form.formState.errors.locationValue.message}</p>}
               </div>
+
+              {watchType === "room" && selectedRoom && <section className="space-y-2 border-t pt-4" aria-label="سوابق بازرسی اتاق">
+                <h2 className="font-semibold">سوابق بازرسی اتاق {selectedRoom.number}</h2>
+                {historyLoading ? <p className="text-sm">در حال دریافت گزارش‌ها...</p> : historyError ? <p role="alert" className="text-sm text-destructive">دریافت گزارش‌ها ناموفق بود.</p> : history.length === 0 ? <p className="text-sm text-muted-foreground">هنوز گزارشی برای این اتاق ثبت نشده است.</p> : history.map((report) => <details key={report.id} className="rounded-md border p-3 text-sm">
+                  <summary className="cursor-pointer font-medium">{new Date(report.createdAt).toLocaleString("fa-IR")}</summary>
+                  <ul className="mt-3 space-y-2">{[...CHECKLISTS.room, ...report.customItems.map((item) => ({ ...item, Icon: Plus }))].map((item) => <li key={item.id}><span>{item.label}: {report.results[item.id] === "ok" ? "سالم" : "خراب"}</span>{report.details[item.id] && <p className="text-muted-foreground">{report.details[item.id]}</p>}</li>)}</ul>
+                </details>)}
+              </section>}
 
               <Button type="submit" className="w-full h-11">شروع بازرسی</Button>
             </form>

@@ -13,8 +13,11 @@ const secret = jwtSecret ?? "development-only-change-me-before-production";
 const cookieName = process.env.AUTH_COOKIE_NAME ?? "senfi_session";
 
 export type AuthenticatedRequest = Request & {
-  auth?: { userId: string; roles: AppRole[] };
+  auth?: { userId: string; roles: AppRole[]; publicDormTest?: boolean };
 };
+
+export const publicDormTestUserId = "00000000-0000-4000-8000-000000000001";
+export const publicDormTestEmail = "public-dorm-test@invalid.example";
 
 export function publicUser(user: {
   id: string;
@@ -54,6 +57,21 @@ export function clearSession(res: Response) {
 
 export async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const token = req.cookies?.[cookieName];
+  if (process.env.PUBLIC_TEST_MODE === "true") {
+    try {
+      const user = await prisma.user.upsert({
+        where: { id: publicDormTestUserId },
+        create: { id: publicDormTestUserId, email: publicDormTestEmail, passwordHash: "!public-test-login-disabled!" },
+        update: {},
+        select: { email: true },
+      });
+      if (user.email !== publicDormTestEmail) return res.status(409).json({ error: "Test user ID is already in use." });
+      req.auth = { userId: publicDormTestUserId, roles: [AppRole.admin], publicDormTest: true };
+      return next();
+    } catch (error) {
+      return next(error);
+    }
+  }
   if (!token) return res.status(401).json({ error: "Authentication required." });
 
   try {

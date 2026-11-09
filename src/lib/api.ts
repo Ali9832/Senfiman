@@ -42,6 +42,31 @@ type ApiError = Error & { status?: number };
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (DEMO_MODE) {
     const method = init.method ?? "GET";
+    const roomPath = path.match(/^\/api\/dorms\/([^/]+)\/rooms(?:\/([^/]+))?(?:\/(inspections))?$/);
+    if (roomPath) {
+      const [, buildingId, roomId, inspections] = roomPath;
+      const key = `demo-dorm-rooms-${buildingId}`;
+      const rooms = JSON.parse(localStorage.getItem(key) || "[]") as Array<{ id: string; number: string; floor: string; capacity: number }>;
+      if (inspections && roomId) return { inspections: JSON.parse(localStorage.getItem(`demo-room-inspections-${roomId}`) || "[]") } as T;
+      if (method === "GET") return { rooms } as T;
+      const body = typeof init.body === "string" ? JSON.parse(init.body) : {};
+      if (rooms.some((room) => room.number === body.number && room.id !== roomId)) throw Object.assign(new Error("Duplicate room"), { status: 409 });
+      const room = { id: roomId || crypto.randomUUID(), ...body };
+      localStorage.setItem(key, JSON.stringify(roomId ? rooms.map((item) => item.id === roomId ? room : item) : [...rooms, room]));
+      return { room } as T;
+    }
+    if (path === "/api/qc/inspections" && method === "POST" && typeof init.body === "string") {
+      const body = JSON.parse(init.body);
+      if (body.inspectionType === "room") {
+        const rooms = JSON.parse(localStorage.getItem(`demo-dorm-rooms-${body.facultyId}`) || "[]") as Array<{ id: string; number: string }>;
+        const room = rooms.find((item) => item.number === body.locationValue);
+        if (!room) throw Object.assign(new Error("Room not found"), { status: 404 });
+        const key = `demo-room-inspections-${room.id}`;
+        const inspection = { id: crypto.randomUUID(), createdAt: new Date().toISOString(), results: body.results, details: body.details, customItems: body.customItems };
+        localStorage.setItem(key, JSON.stringify([inspection, ...JSON.parse(localStorage.getItem(key) || "[]")]));
+        return { inspection } as T;
+      }
+    }
     if (path === "/api/auth/me") {
       const user = getDemoUser();
       if (!user) throw Object.assign(new Error("نشست فعالی وجود ندارد"), { status: 401 });

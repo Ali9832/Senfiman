@@ -5,7 +5,7 @@
   "outputDirectory": "dist",
   "env": { "PUBLIC_TEST_MODE": "true" },
   "build": {
-    "env": { "VITE_DEMO_MODE": "false" }
+    "env": { "VITE_DEMO_MODE": "false", "VITE_PUBLIC_TEST_MODE": "true" }
   },
   "functions": {
     "api/index.ts": {

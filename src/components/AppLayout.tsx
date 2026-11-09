@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { PUBLIC_TEST_MODE } from "@/lib/api";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -378,10 +379,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               </DropdownMenuContent>
             </DropdownMenu>
             <span className="text-xs bg-accent/30 text-accent-foreground px-2 py-0.5 rounded-full">{fullAccess ? "شورای ناظر · دسترسی کامل" : ROLE_LABELS[roles[roles.length - 1]] ?? "کاربر"}</span>
-            <Button variant="ghost" size="sm" onClick={signOut} className="gap-1">
+            {!PUBLIC_TEST_MODE && <Button variant="ghost" size="sm" onClick={signOut} className="gap-1">
               <LogOut className="h-4 w-4" />
               <span className="hidden sm:inline">خروج</span>
-            </Button>
+            </Button>}
           </div>
         </header>
 

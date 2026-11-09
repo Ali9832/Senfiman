@@ -21,6 +21,7 @@ import {
 } from "./demoData";
 
 export const DEMO_MODE = import.meta.env.VITE_DEMO_MODE !== "false";
+export const PUBLIC_TEST_MODE = import.meta.env.VITE_PUBLIC_TEST_MODE === "true" && !DEMO_MODE;
 
 const DEMO_COMPLAINTS_KEY = "demo-complaints";
 

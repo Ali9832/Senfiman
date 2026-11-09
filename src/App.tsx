@@ -9,7 +9,6 @@ import { AuthProvider } from "./hooks/useAuth";
 import ProtectedRoute from "./components/ProtectedRoute";
 import RoleGate from "./components/RoleGate";
 import AuthPage from "./pages/Auth";
-import { PUBLIC_TEST_MODE } from "./lib/api";
 import Home from "./pages/Home";
 import CalendarPage from "./pages/Calendar";
 import Schedule from "./pages/Schedule";
@@ -63,7 +62,7 @@ const App = () => (
               <Toaster />
               <Sonner />
               <Routes>
-                <Route path="/auth" element={PUBLIC_TEST_MODE ? <Navigate to="/" replace /> : <AuthPage />} />
+                <Route path="/auth" element={<AuthPage />} />
                 <Route path="/" element={<Layout><Home /></Layout>} />
                 <Route path="/calendar" element={<Layout><RoleGate permission="student.use"><CalendarPage /></RoleGate></Layout>} />
                 <Route path="/library" element={<Layout><RoleGate permission="student.use"><Library /></RoleGate></Layout>} />

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, DEMO_MODE } from "@/lib/api";
+import { api, DEMO_MODE, PUBLIC_TEST_MODE } from "@/lib/api";
 import { DEMO_PERSONAS } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,11 +25,17 @@ export default function AuthPage() {
   const [signIn, setSignIn] = useState({ email: "", password: "" });
   const [signUp, setSignUp] = useState({ email: "", password: "", firstName: "", lastName: "", studentCode: "" });
 
-  useEffect(() => { if (!loading && user) nav("/", { replace: true }); }, [user, loading, nav]);
+  useEffect(() => { if (!PUBLIC_TEST_MODE && !loading && user) nav("/", { replace: true }); }, [user, loading, nav]);
 
   async function enterAs(personaId?: string) {
     setBusy(true);
     try {
+      if (PUBLIC_TEST_MODE && personaId) {
+        sessionStorage.setItem("public-test-persona", personaId);
+        await refresh();
+        nav("/", { replace: true });
+        return;
+      }
       await api("/api/auth/login", { method: "POST", body: JSON.stringify({ ...signIn, personaId }) });
       await refresh();
       toast.success("سطح دسترسی شما اعمال شد");
@@ -61,11 +67,11 @@ export default function AuthPage() {
       <Card className="w-full max-w-3xl shadow-2xl">
         <CardHeader className="text-center space-y-2">
           <div className="mx-auto w-14 h-14 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center"><Building2 className="h-7 w-7" /></div>
-          <CardTitle className="text-2xl">ورود به سامانه دانشجویی</CardTitle>
-          <p className="text-sm text-muted-foreground">نوع حساب، صفحه‌ها و اختیارهای قابل دسترس را تعیین می‌کند.</p>
+          <CardTitle className="text-2xl">{PUBLIC_TEST_MODE ? "انتخاب نقش آزمایشی" : "ورود به سامانه دانشجویی"}</CardTitle>
+          <p className="text-sm text-muted-foreground">{PUBLIC_TEST_MODE ? "بدون نام کاربری و رمز، نقش موردنظر را برای نمایش انتخاب کنید. این انتخاب محدودیت امنیتی ایجاد نمی‌کند." : "نوع حساب، صفحه‌ها و اختیارهای قابل دسترس را تعیین می‌کند."}</p>
         </CardHeader>
         <CardContent>
-          {DEMO_MODE ? (
+          {DEMO_MODE || PUBLIC_TEST_MODE ? (
             <Tabs defaultValue="student">
               <TabsList className="grid grid-cols-3 w-full h-auto mb-5">
                 {GROUPS.map((group) => <TabsTrigger key={group.id} value={group.id} className="gap-2 py-2.5">{group.icon}<span className="hidden sm:inline">{group.label}</span></TabsTrigger>)}

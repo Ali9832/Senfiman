@@ -29,6 +29,9 @@ export default function Admin() {
   const { user } = useAuth();
   const publicTest = user?.email === "public-dorm-test@invalid.example";
   const [buildings, setBuildings] = useState<Building[]>([]);
+  const [buildingsLoading, setBuildingsLoading] = useState(true);
+  const [buildingsError, setBuildingsError] = useState(false);
+  const [overviewError, setOverviewError] = useState(false);
   const [newName, setNewName] = useState("");
   const [newKind, setNewKind] = useState<string>("faculty");
   const [busy, setBusy] = useState(false);
@@ -48,6 +51,19 @@ export default function Admin() {
 
   const [stats, setStats] = useState<{ users: number; transfers: number; lockers: number; qc: number } | null>(null);
 
+  const loadBuildings = async () => {
+    setBuildingsLoading(true);
+    setBuildingsError(false);
+    try {
+      const data = await api<{ buildings: Building[] }>("/api/buildings");
+      setBuildings(data.buildings);
+    } catch {
+      setBuildingsError(true);
+    } finally {
+      setBuildingsLoading(false);
+    }
+  };
+
   const loadAll = async () => {
     try {
       const data = await api<{
@@ -56,18 +72,18 @@ export default function Admin() {
         roles: { user_id: string; role: Role }[];
         stats: { users: number; transfers: number; lockers: number; qc: number };
       }>("/api/admin/overview");
-      setBuildings(data.buildings);
       setProfiles(data.profiles);
       const map: Record<string, Role[]> = {};
       data.roles.forEach((row) => { (map[row.user_id] ||= []).push(row.role); });
       setRoles(map);
       setStats(data.stats);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "دریافت اطلاعات مدیریت ناموفق بود");
+      setOverviewError(false);
+    } catch {
+      setOverviewError(true);
     }
   };
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { void loadBuildings(); void loadAll(); }, []);
 
   const addBuilding = async () => {
     if (!newName.trim()) return;
@@ -79,7 +95,7 @@ export default function Admin() {
       });
       toast.success("ساختمان اضافه شد");
       setNewName("");
-      void loadAll();
+      void loadBuildings();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "افزودن ساختمان ناموفق بود");
     } finally {
@@ -91,7 +107,7 @@ export default function Admin() {
     if (!confirm("حذف این ساختمان؟")) return;
     try {
       await api(`/api/admin/buildings/${id}`, { method: "DELETE" });
-      void loadAll();
+      void loadBuildings();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "حذف ساختمان ناموفق بود");
     }
@@ -151,6 +167,8 @@ export default function Admin() {
         <Badge variant="secondary">{publicTest ? "آزمایش بدون ورود" : "نقش: ادمین"}</Badge>
       </h1>
 
+      {overviewError && <div role="alert" className="text-sm text-destructive">دریافت آمار و اطلاعات کاربران ناموفق بود. <Button variant="link" size="sm" onClick={() => void loadAll()}>تلاش دوباره</Button></div>}
+
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
@@ -192,7 +210,7 @@ export default function Admin() {
                 </Select>
                 <Button onClick={addBuilding} disabled={busy} className="gap-1"><Plus className="h-4 w-4" />افزودن</Button>
               </div>
-              <div className="space-y-1">
+              {buildingsLoading ? <p className="text-sm text-muted-foreground">در حال دریافت ساختمان‌ها...</p> : buildingsError ? <div role="alert" className="text-sm text-destructive">دریافت ساختمان‌ها ناموفق بود. <Button variant="link" size="sm" onClick={() => void loadBuildings()}>تلاش دوباره</Button></div> : <div className="space-y-1">
                 {buildings.map((b) => (
                   <div key={b.id} className="flex items-center justify-between p-2 bg-muted/50 rounded-lg">
                     <div className="flex items-center gap-2 text-sm">
@@ -204,8 +222,8 @@ export default function Admin() {
                     </Button>
                   </div>
                 ))}
-              </div>
-              <DormRooms buildings={buildings} />
+              </div>}
+              {!buildingsLoading && !buildingsError && <DormRooms buildings={buildings} />}
             </CardContent>
           </Card>
         </TabsContent>
